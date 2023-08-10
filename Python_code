@@ -1,0 +1,589 @@
+# Dash is running on http://127.0.0.1:8050/
+
+#########################    1. Fetching data from database    #########################
+
+from pyqlib.utils.dbutils import connect, rowsAsDicts, fetchAsDict
+import pandas as pd
+
+DB_CONFIG = {'DB_SERVER': 'VSGEISWPSQL06.pru.intranet.asia', 
+             'DB_NAME': 'InvSol', 
+             'DB_SCHEMA': 'dbo', 
+             'DB_DRIVER': '{ODBC Driver 17 for SQL Server}'}
+DB_CONN = connect(db_cfg = DB_CONFIG)
+
+query = """SELECT id, date, value
+           FROM D_ASSET_FIELD_VALUES
+           WHERE id IN (75,1291436, 1298173, 1298175, 1307282, 1308490, 935524, 1291444,1298176, 1308491, 1307129, 1291447, 1298174)
+             And date >= '2005-01-01'
+           ORDER BY date DESC"""
+# Add more codes above if you want other fields. The ID is field ID in the database.
+
+res_2 = pd.DataFrame(rowsAsDicts(DB_CONN, sql=query))
+
+print(res_2)
+user_id = '414845'
+filename_2 = 'fetched_data'
+res_2.to_csv(f'C:/Users/{user_id}/Desktop/trial dash/{filename_2}.csv')
+
+# Check if connection is open, if so, close it.
+try:
+    DB_CONN.cursor()
+    DB_CONN.close()
+except: # Programming error
+    pass
+
+
+
+#########################    2. Mapping data to index name    #########################
+
+import pandas as pd
+
+# Load the CSV data
+data = pd.read_csv("fetched_data.csv")
+
+# Create a dictionary to map id to index name
+index_name_map = {
+   75: "ICE BofA US Corporate Index---Total Return",
+   1291436: "ICE BofA US Corporate Index---Yield to Maturity",
+   1298173: "ICE BofA US Corporate Index---OAS",
+   1298175: "ICE BofA US Corporate Index---Spread To Worst",
+   1307282: "ICE BofA US Corporate Index---Modified Duration",
+   1308490: "ICE BofA US Corporate Index---Final  Maturity",
+   935524: "Bloomberg U.S. Corporate Investment Grade USD---Total Return",
+   1291444: "Bloomberg U.S. Corporate Investment Grade USD---OAS",
+   1298176: "Bloomberg U.S. Corporate Investment Grade USD---Average Yield to Worst",
+   1308491: "Bloomberg U.S. Corporate Investment Grade USD---Average Maturity",
+   1307129: "Bloomberg U.S. Corporate Investment Grade USD---Modified Duration",
+   1291447: "IBOXX $ LIQUID INVESTMENT GRADE INDEX---OAS",
+   1298174: "IBOXX $ LIQUID INVESTMENT GRADE INDEX---Z-Spread"
+
+   # Add more mappings as needed
+}
+
+# Add the new column "index_name" based on the values of "id". Add new columns "index" and "field" by splittng column "index_name"
+data["index_name"] = data["id"].map(index_name_map)
+data[["index","field"]] = data["index_name"].str.split('---', n=1, expand=True)
+
+# Replace NaN values in the "index name" column with a default value (e.g., "Unknown")
+data["index_name"] = data["index_name"].fillna("Unknown")
+data[["index","field"]] = data[["index","field"]].fillna("Unknown")
+
+# Save the modified dataframe with a different file name
+data.to_csv("mapped_data.csv", index = False)
+
+
+
+#########################    3. Main Dash Scripts    #########################
+
+import dash
+from dash import html
+from dash import dcc
+import pandas as pd
+from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
+from dash import dash_table
+import locale
+
+# Load the CSV data
+data = pd.read_csv("mapped_data.csv")
+data["date"] = pd.to_datetime(data["date"])
+
+# Define the period options
+period_options = [
+    {'label': "Last Week", 'value': (datetime.now() - pd.DateOffset(days=7)).isoformat()},
+    {'label': "Last Month", 'value': (datetime.now() - pd.DateOffset(days=30)).isoformat()},
+    {'label': "Last 1 Year", 'value': (datetime.now() - pd.DateOffset(days=365)).isoformat()},
+    {'label': "Last 2 Years", 'value': (datetime.now() - pd.DateOffset(days=730)).isoformat()},
+    {'label': "Last 5 Years", 'value': (datetime.now() - pd.DateOffset(days=1825)).isoformat()},
+    {'label': "Last 10 Years", 'value': (datetime.now() - pd.DateOffset(days=3650)).isoformat()}
+]
+
+# Define the index options
+index_options = [index_val for index_val in data['index_name'].unique()]
+
+   # Load the constituent data
+constituent_data = pd.read_csv("constituent_data.csv", usecols=["Date", "FX Version", "Issuer", "Level 0", "Level 6", "Market Value"])
+constituent_data["Date"] = pd.to_datetime(constituent_data["Date"])
+constituent_data["Market Value"] = pd.to_numeric(constituent_data["Market Value"], errors="coerce")
+constituent_data.rename(columns={"Level 0": "Currency", "Level 6": "Sector"}, inplace=True)
+constituent_data["Sector"] = constituent_data["Sector"].replace("*", "Unkown")
+
+# Define the currency options
+currency_options = constituent_data["Currency"].unique()
+
+# Define the date options
+date_options = constituent_data["Date"].dt.date.unique()
+
+
+# Define the field options
+field_options = data["field"].unique()
+
+# Set the locale to the user's system locale to format numbers with commas
+locale.setlocale(locale.LC_ALL, '')
+
+# Market value by Sector
+# Custom CSS style
+custom_style = {
+   'container': {
+       'border': '1px solid black',
+       'width': '100%',
+       'height': '500px',  # Adjust the maximum height of the container here
+       "text-align": "center",
+       'vertical-align':'top',
+       'justiy-content' : 'center'
+   },
+   'table': {
+       'width': '300',  # Adjust the width of the table here
+       "text-align": "center",
+       'vertical-align':'top',
+       'display': 'inline-block'
+   },
+   'pie-chart-container': {
+       'width': '300',  # Adjust the width of the pie chart here
+       'display': 'inline-block',
+       "text-align": "center"
+   },
+   'container2': {
+       'border': '1px solid black',
+       'width': '100%',
+       'height': '500px',  # Adjust the maximum height of the container here
+       "text-align": "center",
+       'vertical-align':'top',
+       'justiy-content' : 'center'
+   },
+}
+
+# Create the Dash app
+app = dash.Dash(__name__)
+
+# Define the application layout
+app.layout = html.Div(
+    children=[
+        html.H1("LDI Index Dashboard"),
+        dcc.Tabs(
+            id="tabs",
+            value="graphs",
+            children=[
+                dcc.Tab(label="Index Graphs", value="graphs", style={'background':'#E4B0AA'}, selected_style={'background':'#E4B0AA', 'fontWeight':'bold'}), 
+                dcc.Tab(label="Index Comparison Graphs", value="index_comparison", style={'background':'#E4B0AA'}, selected_style={'background':'#E4B0AA', 'fontWeight':'bold'}),         
+                dcc.Tab(label="Index Tables", value="data-tables", style={'background':'#E4B0AA'}, selected_style={'background':'#E4B0AA', 'fontWeight':'bold'}),
+                dcc.Tab(label="Constituents(eg.iBoxx ALBI)", value="constituents", style={'background':'#E4B0AA'}, selected_style={'background':'#E4B0AA', 'fontWeight':'bold'})
+            ]
+        ),
+        html.Div(id="tab-content")
+    ]
+)
+
+# Callback to render the appropriate tab content
+@app.callback(
+    dash.dependencies.Output("tab-content", "children"),
+    [dash.dependencies.Input("tabs", "value")]
+)
+def render_content(tab):
+    if tab == "graphs":
+        return html.Div(
+            children=[
+                html.H2(" "),
+                html.Div(
+                    children=[
+                        dcc.Dropdown(
+                            id="period-dropdown",
+                            options=period_options,
+                            value=period_options[0]["value"],
+                            placeholder="Select a Period",
+                            style={"backgroundColor": "#FFE7BE", "height": "30px", "width": "400px"}
+                        ),
+                        dcc.Dropdown(
+                            id="index-dropdown",
+                            options=[{"label": index_name, "value": index_name} for index_name in index_options],
+                            placeholder="Select an Index",
+                            style={"backgroundColor": "#FFE7BE", "height": "30px", "width": "400px"}
+                        ),
+                    ],
+                    style={"display": "flex", "justify-content": "center", "align-items": "center", "margin-bottom": "20px"}
+                ),
+                html.Div(id="graphs-container",
+                         children=[dcc.Graph(id=f"index-graph-{index_name}") for index_name in index_options
+           ],
+       ),
+            ]
+        )
+    if tab == "index_comparison":
+        return html.Div(
+            children=[
+                html.H2(" "),
+                html.Div(
+           children=[
+               dcc.Dropdown(
+                   id="period-dropdown",
+                   options=period_options,
+                   value=period_options[0]['value'],
+                   placeholder="Select a Period",
+                   style={"backgroundColor": "#D3DEES", "height": "30px", "width": "400px"}
+               ),
+               dcc.Dropdown(
+                   id="field-dropdown",
+                   options=[{"label": field_name, "value": field_name} for field_name in field_options],
+                   value=field_options[0],
+                   placeholder="Select a Field",
+                   style={"backgroundColor": "#FFE7BE", "height": "30px", "width": "400px"}
+               )
+           ],
+           style={"display": "flex", "justify-content": "center", "align-items": "center", "margin-bottom": "20px"}
+       ),
+       dcc.Graph(id="index-graph")
+            ]
+        )
+
+    
+    if tab == "constituents":
+        return html.Div(
+                   children=[
+                       html.H2(" "),
+                       html.Div(children=[
+                           dcc.Dropdown(id="currency-dropdown",
+                                        options=[{"label": currency, "value": currency} for currency in currency_options],
+                                        placeholder="Select a Currency",
+                                        style={"backgroundColor": "#D3DEE5", "height": "30px", "width": "400px"}
+                                        ),
+                           dcc.Dropdown(id="date-dropdown",
+                                        options=[{"label": date, "value": date} for date in date_options],
+                                        placeholder="Select a Date",
+                                        style={"backgroundColor": "#D3DEE5", "height": "30px", "width": "400px"}
+                                        ),
+                                          ],
+                                style={"display": "flex", "justify-content": "center", "align-items": "center", "margin-bottom": "20px"}
+                                  ),
+                    # Add headline for the table1
+                       html.H3(
+                            "Market value by Sector",
+                            style={"display": "flex", "text-align": "center","margin-top": "10px", "color": "#808B92"}
+                       ),
+                       html.Div(
+                           id="container",
+                           children=[
+                               html.Div(id="pie-chart-table-container", style=custom_style["table"]),
+                               html.Div(id="pie-chart-container", style=custom_style["pie-chart-container"]),
+                           ],
+                           style=custom_style["container"],
+                       ),
+                           # Add headline for the table2
+                       html.H3(
+                            "Market value by Issuer(Top 20)",
+                            style={"display": "flex", "text-align": "center","margin-top": "10px", "color": "#808B92"}
+                       ),
+                       html.Div(
+                           id="container2",
+                           children=[
+                               html.Div(id="pie-chart-table-container2", style=custom_style["table"]),
+                               html.Div(id="pie-chart-container2", style=custom_style["pie-chart-container"]),
+                           ],
+                           style=custom_style["container2"],
+                       )
+                   ]
+                )
+
+    elif tab == "data-tables":
+        return html.Div(
+            children=[
+                html.H2(" "),
+                html.Div(
+                    children=[
+                        dcc.Dropdown(
+                            id="period-dropdown",
+                            options=period_options,
+                            value=period_options[0]["value"],
+                            placeholder="Select a Period",
+                            style={"backgroundColor": "#FFE7BE", "height": "30px", "width": "400px"}
+                        ),
+                        dcc.Dropdown(
+                            id="index-dropdown",
+                            options=[{"label": index_name, "value": index_name} for index_name in index_options],
+                            placeholder="Select an Index",
+                            style={"backgroundColor": "#FFE7BE", "height": "30px", "width": "400px"}
+                        ),
+                    ],
+                    style={"display": "flex", "justify-content": "center", "align-items": "center", "margin-bottom": "20px"}
+                ),
+                html.Div(id="table-container")
+            ]
+        )
+
+# Define callbacks
+@app.callback(
+   dash.dependencies.Output("graphs-container", "children"),
+   [
+       dash.dependencies.Input("period-dropdown", "value"),
+       dash.dependencies.Input("index-dropdown", "value"),
+   ]
+)
+def update_graph(selected_period, selected_index):
+   # Perform operations based on the selected period and index
+   # Filter or process data accordingly
+   filtered_data = data[data["date"] >= pd.to_datetime(selected_period)]
+
+   graphs = []
+   for index_name in index_options:
+       # If an index is selected, skip other index graphs
+       if selected_index and index_name != selected_index:
+           continue
+       filtered_data_subset = filtered_data[filtered_data["index_name"] == index_name]
+
+       figure = go.Figure()
+      
+       figure.add_trace(
+           go.Scatter(
+               x=filtered_data_subset["date"],
+               y=filtered_data_subset["value"],
+               name=index_name,
+               mode="lines",
+               line=dict(color="#E58E1A")  # set the desired line color or defaul to red
+           )
+       )
+       figure.update_layout(
+           title=f"{index_name}",
+           xaxis=dict(title="Date"),
+           yaxis=dict(title="Value")
+       )
+
+       graphs.append(
+           dcc.Graph(
+               id=f"index-graph-{index_name}",
+               figure=figure
+           )
+       )
+
+   return graphs
+
+@app.callback(
+   dash.dependencies.Output("index-graph", "figure"),
+   [dash.dependencies.Input("period-dropdown", "value"), dash.dependencies.Input("field-dropdown", "value")]
+)
+def update_graph(selected_period, selected_field):
+   # Perform operations based on the selected period and field
+   # Filter or process data accordingly
+   filtered_data = data[(data["date"] >= pd.to_datetime(selected_period)) & (data["field"] == selected_field)]
+
+   # Create a figure for the graph
+   figure = go.Figure()
+
+   # Group data by "index_name"
+   grouped_data = filtered_data.groupby("index_name")
+
+   # Add traces for each group
+   for index_name, group_data in grouped_data:
+       figure.add_trace(
+           go.Scatter(
+               x=group_data["date"],
+               y=group_data["value"],
+               name=index_name,
+               mode="lines",
+               line=dict(color="#B30838")  # Set the desired line color or default to red
+           )
+       )
+
+   # Add annotations for each "index_name"
+   for index_name, group_data in grouped_data:
+       last_value = group_data.iloc[-1]["value"]
+       figure.add_annotation(
+           go.layout.Annotation(
+               x=group_data.iloc[-1]["date"],
+               y=last_value,
+               xref="x",
+               yref="y",
+               text=index_name,
+               showarrow=True,
+               arrowhead=4,
+               ax=0,
+               ay=-40
+           )
+       )
+
+   # Customize the layout of the figure
+   figure.update_layout(
+       title="Index Data",
+       xaxis=dict(title="Date"),
+       yaxis=dict(title="Value"),
+       showlegend=False
+   )
+
+   return figure
+
+
+@app.callback(
+    dash.dependencies.Output("table-container", "children"),
+    [dash.dependencies.Input("period-dropdown", "value"),
+     dash.dependencies.Input("index-dropdown", "value")]
+)
+
+def update_table(selected_period, selected_index):
+    # Check if "selected_index" is not None (i.e., an index is selected)
+    if selected_index is not None:
+        # Filter the data based on the selected period and index
+        filtered_data = data[(data["date"] >= pd.to_datetime(selected_period)) & (data["index_name"] == selected_index)]
+    else:
+        # Filter the data based on the selected period only (no index selected)
+        filtered_data = data[data["date"] >= pd.to_datetime(selected_period)]
+
+    # Keep only specific columns in the DataTable
+    columns_to_keep = ["date", "index_name", "value", "field"]
+    filtered_data = filtered_data[columns_to_keep]
+
+    # Create the DataTable component
+    table = dash_table.DataTable(
+        id='data-table',
+        columns=[{"name": col, "id": col} for col in filtered_data.columns],
+        data=filtered_data.to_dict('records'),
+        style_table={'overflowX': 'scroll'
+                     },  # Allow horizontal scrolling
+        style_cell = {'maxWidth':'100px'}
+    )
+
+    return table
+
+@app.callback(
+   dash.dependencies.Output("pie-chart-table-container", "children"),
+   [
+       dash.dependencies.Input("currency-dropdown", "value"),
+       dash.dependencies.Input("date-dropdown", "value"),
+   ]
+)
+def update_pie_chart_table(selected_currency, selected_date):
+   if not selected_currency or not selected_date:
+       return html.Div()
+
+   selected_date = datetime.strptime(selected_date, "%Y-%m-%d")
+   filtered_constituent_data = constituent_data[
+       (constituent_data["Currency"] == selected_currency) &
+       (constituent_data["Date"].dt.date == selected_date.date())
+   ]
+
+   pie_data = filtered_constituent_data.groupby("Sector")["Market Value"].sum().reset_index()
+   pie_data["Market Value"] = pie_data["Market Value"].apply(lambda x: locale.format_string("%d", x, grouping=True))
+
+   pie_chart_table = html.Table(
+       children=[
+           html.Thead(
+               html.Tr(
+                   [html.Th("Sector"), html.Th("Market Value Sum")]
+               )
+           ),
+           html.Tbody(
+               [
+                   html.Tr(
+                       [html.Td(pie_data.iloc[i][col]) for col in pie_data.columns]
+                   )
+                   for i in range(len(pie_data))
+               ]
+           ),
+       ]
+   )
+
+   return pie_chart_table
+
+@app.callback(
+   dash.dependencies.Output("pie-chart-container", "children"),
+   [
+       dash.dependencies.Input("currency-dropdown", "value"),
+       dash.dependencies.Input("date-dropdown", "value"),
+   ]
+)
+def update_pie_chart(selected_currency, selected_date):
+   if not selected_currency or not selected_date:
+       return html.Div()
+
+   selected_date = datetime.strptime(selected_date, "%Y-%m-%d")
+   filtered_constituent_data = constituent_data[
+       (constituent_data["Currency"] == selected_currency) &
+       (constituent_data["Date"].dt.date == selected_date.date())
+   ]
+
+   pie_data = filtered_constituent_data.groupby("Sector")["Market Value"].sum().reset_index()
+   pie_fig = go.Figure(data=[go.Pie(labels=pie_data["Sector"], values=pie_data["Market Value"])])
+   pie_fig.update_layout
+
+   pie_chart = dcc.Graph(figure=pie_fig)
+
+   return pie_chart
+
+
+# Market value by Issuer
+@app.callback(
+   dash.dependencies.Output("pie-chart-table-container2", "children"),
+   [
+       dash.dependencies.Input("currency-dropdown", "value"),
+       dash.dependencies.Input("date-dropdown", "value"),
+   ]
+)
+def update_pie_chart_table2(selected_currency, selected_date):
+   if not selected_currency or not selected_date:
+       return html.Div()
+
+   selected_date = datetime.strptime(selected_date, "%Y-%m-%d")
+   filtered_constituent_data = constituent_data[
+       (constituent_data["Currency"] == selected_currency) &
+       (constituent_data["Date"].dt.date == selected_date.date())
+   ]
+   # Get the top 20 big sectors by market value
+   top_20_sectors = filtered_constituent_data.groupby("Issuer")["Market Value"].sum().nlargest(20).index
+
+   # Filter data for the top 20 sectors
+   filtered_constituent_data = filtered_constituent_data[filtered_constituent_data["Issuer"].isin(top_20_sectors)]
+
+   pie_data2 = filtered_constituent_data.groupby("Issuer")["Market Value"].sum().reset_index()
+   pie_data2["Market Value"] = pie_data2["Market Value"].apply(lambda x: locale.format_string("%d", x, grouping=True))
+
+   pie_chart_table2 = html.Table(
+       children=[
+           html.Thead(
+               html.Tr(
+                   [html.Th("Issuer"), html.Th("Market Value Sum")]
+               )
+           ),
+           html.Tbody(
+               [
+                   html.Tr(
+                       [html.Td(pie_data2.iloc[i][col]) for col in pie_data2.columns]
+                   )
+                   for i in range(len(pie_data2))
+               ]
+           ),
+       ]
+   )
+
+   return pie_chart_table2
+
+@app.callback(
+   dash.dependencies.Output("pie-chart-container2", "children"),
+   [
+       dash.dependencies.Input("currency-dropdown", "value"),
+       dash.dependencies.Input("date-dropdown", "value"),
+   ]
+)
+def update_pie_chart2(selected_currency, selected_date):
+   if not selected_currency or not selected_date:
+       return html.Div()
+
+   selected_date = datetime.strptime(selected_date, "%Y-%m-%d")
+   filtered_constituent_data = constituent_data[
+       (constituent_data["Currency"] == selected_currency) &
+       (constituent_data["Date"].dt.date == selected_date.date())
+   ]
+    # Get the top 20 big sectors by market value
+   top_20_sectors = filtered_constituent_data.groupby("Issuer")["Market Value"].sum().nlargest(20).index
+
+   # Filter data for the top 20 sectors
+   filtered_constituent_data = filtered_constituent_data[filtered_constituent_data["Issuer"].isin(top_20_sectors)]
+
+
+   pie_data2 = filtered_constituent_data.groupby("Issuer")["Market Value"].sum().reset_index()
+   pie_fig2 = go.Figure(data=[go.Pie(labels=pie_data2["Issuer"], values=pie_data2["Market Value"])])
+   pie_fig2.update_layout
+
+   pie_chart2 = dcc.Graph(figure=pie_fig2)
+
+   return pie_chart2
+
+if __name__ == "__main__":
+    app.run_server(debug=False, port=8050)
